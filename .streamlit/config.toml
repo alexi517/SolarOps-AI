@@ -1,0 +1,24 @@
+# SolarOps AI dashboard theme (Phase 7b polish pass — docs/hase7b-dashboard-polish-pass.md §1).
+# Streamlit reads this relative to the directory `streamlit run` is invoked
+# from — per dashboard/README.md that's the repo root, so this file lives here.
+
+[theme]
+base = "light"
+primaryColor = "#4CAF50"
+backgroundColor = "#F7FAF7"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1C2B24"
+font = "sans serif"
+
+# --- Dark variant — comment out the [theme] block above and uncomment this
+# one to flip the whole dashboard to dark mode. Same green accent throughout. ---
+# [theme]
+# base = "dark"
+# primaryColor = "#4CAF50"
+# backgroundColor = "#12160F"
+# secondaryBackgroundColor = "#1B211A"
+# textColor = "#E7F0E9"
+# font = "sans serif"
+
+[client]
+toolbarMode = "minimal"

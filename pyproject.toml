@@ -1,0 +1,242 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "solarops"
+version = "0.1.0"
+description = "SolarOps AI — safe, auditable control plane for solar energy assets"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "redis>=5",
+    "langgraph>=1.2",
+    "xgboost>=2",
+    "mlflow>=2",
+    "scikit-learn>=1.4",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "prometheus-client>=0.20",
+    "sqlalchemy>=2",
+    "psycopg[binary]>=3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "import-linter",
+    "fakeredis",
+    "httpx>=0.27",
+]
+# dashboard/ is a standalone program outside src/solarops/ (Phase 7b brief §1)
+# — it never imports solarops, so it gets its own extra rather than living in dev.
+dashboard = [
+    "streamlit>=1.38",
+    "httpx>=0.27",
+    "plotly>=5.20",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/solarops"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+# FastAPI's Depends()/Header()/Query() are meant to be called in argument
+# defaults — that's how FastAPI's DI recognizes them (Phase 7a, api/routers).
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Header", "fastapi.Query"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+
+# --- Architecture rules, enforced in CI (Document 8, section 9) ---
+[tool.importlinter]
+root_package = "solarops"
+
+[[tool.importlinter.contracts]]
+name = "Shared kernel depends on nothing else in solarops"
+type = "forbidden"
+source_modules = ["solarops.shared_kernel"]
+forbidden_modules = [
+    "solarops.telemetry",
+    "solarops.forecast",
+    "solarops.anomaly",
+    "solarops.decision",
+    "solarops.safety",
+    "solarops.execution",
+    "solarops.simulation",
+    "solarops.observability",
+    "solarops.api",
+    "solarops.workflow",
+    "solarops.platform",
+]
+
+# Reasoning-layer contexts may never import the Execution context.
+# (Activates once those packages exist — Phases 2–6.)
+[[tool.importlinter.contracts]]
+name = "Reasoning layer cannot reach Execution"
+type = "forbidden"
+source_modules = [
+    "solarops.telemetry",
+    "solarops.forecast",
+    "solarops.anomaly",
+    "solarops.decision",
+]
+forbidden_modules = ["solarops.execution"]
+
+# Simulation (the Digital Twin) may depend on the shared kernel only — not on
+# any other bounded context (Document 8, section 9.1).
+[[tool.importlinter.contracts]]
+name = "Simulation may only depend on the shared kernel"
+type = "forbidden"
+source_modules = ["solarops.simulation"]
+forbidden_modules = [
+    "solarops.telemetry",
+    "solarops.forecast",
+    "solarops.anomaly",
+    "solarops.decision",
+    "solarops.safety",
+    "solarops.execution",
+    "solarops.observability",
+    "solarops.api",
+    "solarops.workflow",
+    "solarops.platform",
+]
+
+# Telemetry may depend on the shared kernel only — in particular, never on
+# Simulation. The twin adapter that needs both lives in solarops.platform
+# (the composition root), which is not restricted by any of these contracts.
+[[tool.importlinter.contracts]]
+name = "Telemetry may only depend on the shared kernel"
+type = "forbidden"
+source_modules = ["solarops.telemetry"]
+forbidden_modules = [
+    "solarops.simulation",
+    "solarops.forecast",
+    "solarops.anomaly",
+    "solarops.decision",
+    "solarops.safety",
+    "solarops.execution",
+    "solarops.observability",
+    "solarops.api",
+    "solarops.workflow",
+    "solarops.platform",
+]
+
+# Decision may depend on the shared kernel, Telemetry (Doc 8 section 4:
+# Telemetry -> Decision is an Open Host Service / Published Language
+# relationship — EnergyState), and Forecast (Phase 6a brief, section 8) but
+# nothing else. workflow/ (which wires Telemetry + Decision together) and
+# platform/ are composition roots and are deliberately never listed as
+# source_modules in any contract, which is what lets them import every context.
+[[tool.importlinter.contracts]]
+name = "Decision may only depend on the shared kernel, Telemetry, and Forecast"
+type = "forbidden"
+source_modules = ["solarops.decision"]
+forbidden_modules = [
+    "solarops.simulation",
+    "solarops.anomaly",
+    "solarops.safety",
+    "solarops.execution",
+    "solarops.observability",
+    "solarops.api",
+    "solarops.workflow",
+    "solarops.platform",
+]
+
+# Safety may depend on the shared kernel and Telemetry only (it reads
+# EnergyState — the same Open Host Service relationship as Decision, Doc 8
+# section 4). Must never import Simulation directly (Phase 5 brief, section 0.9).
+[[tool.importlinter.contracts]]
+name = "Safety may only depend on the shared kernel and Telemetry"
+type = "forbidden"
+source_modules = ["solarops.safety"]
+forbidden_modules = [
+    "solarops.simulation",
+    "solarops.forecast",
+    "solarops.anomaly",
+    "solarops.decision",
+    "solarops.execution",
+    "solarops.observability",
+    "solarops.api",
+    "solarops.workflow",
+    "solarops.platform",
+]
+
+# Forecast may depend on the shared kernel and Telemetry only (it reads
+# EnergyState for feature engineering — the same Open Host Service
+# relationship as Decision and Safety, Doc 8 section 4). Must never import
+# Simulation directly (Phase 6a brief, section 8) — training data is fed in
+# via HistoricalDataSource, wired at the platform composition root.
+[[tool.importlinter.contracts]]
+name = "Forecast may only depend on the shared kernel and Telemetry"
+type = "forbidden"
+source_modules = ["solarops.forecast"]
+forbidden_modules = [
+    "solarops.simulation",
+    "solarops.anomaly",
+    "solarops.decision",
+    "solarops.safety",
+    "solarops.execution",
+    "solarops.observability",
+    "solarops.api",
+    "solarops.workflow",
+    "solarops.platform",
+]
+
+# Anomaly may depend on the shared kernel and Telemetry only (it reads
+# EnergyState/history — the same Open Host Service relationship as Forecast,
+# Decision, and Safety, Doc 8 section 4). Must never import Simulation
+# directly (Phase 6b brief, section 7) — training data is fed in via
+# HistoricalDataSource, wired at the platform composition root.
+[[tool.importlinter.contracts]]
+name = "Anomaly may only depend on the shared kernel and Telemetry"
+type = "forbidden"
+source_modules = ["solarops.anomaly"]
+forbidden_modules = [
+    "solarops.simulation",
+    "solarops.forecast",
+    "solarops.decision",
+    "solarops.safety",
+    "solarops.execution",
+    "solarops.observability",
+    "solarops.api",
+    "solarops.workflow",
+    "solarops.platform",
+]
+
+# Execution may depend on the shared kernel, Decision (Recommendation is its
+# published-language input), Safety (the gates it drives), and Telemetry (it
+# reads EnergyState for verification) — never Simulation directly. The twin
+# reaches Execution only through HardwareInterface, implemented at the
+# platform composition root (Phase 5 brief, B.1, B.5).
+[[tool.importlinter.contracts]]
+name = "Execution may depend on the shared kernel, Decision, Safety, and Telemetry"
+type = "forbidden"
+source_modules = ["solarops.execution"]
+forbidden_modules = [
+    "solarops.simulation",
+    "solarops.forecast",
+    "solarops.anomaly",
+    "solarops.observability",
+    "solarops.api",
+    "solarops.workflow",
+    "solarops.platform",
+]

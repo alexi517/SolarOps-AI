@@ -1,0 +1,108 @@
+# SolarOps AI — full stack (Phase 8 brief). `docker compose up` brings up the
+# API wired to real Redis/Postgres/MLflow. Add `--profile monitoring` to also
+# bring up Prometheus + Grafana scraping the containerized API by its compose
+# service name (see monitoring/README.md).
+#
+# Supersedes the old Redis-only docker-compose.yml from earlier phases —
+# `redis` here is still a plain service, so `docker compose up redis` alone
+# still works the same way for anyone who only wants that.
+#
+# One shared Postgres database serves both the app's audit log and MLflow's
+# backend store (see DEPLOYMENT.md) — simpler than a multi-database init
+# script for what's currently one extra table's worth of durable app data.
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - redis_data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-solarops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-solarops}
+      POSTGRES_DB: ${POSTGRES_DB:-solarops}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: docker/mlflow.Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://${POSTGRES_USER:-solarops}:${POSTGRES_PASSWORD:-solarops}@postgres:5432/${POSTGRES_DB:-solarops}
+      MLFLOW_ARTIFACT_ROOT: /mlflow/artifacts
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      SOLAROPS_ENV: production
+      SOLAROPS_REDIS_URL: redis://redis:6379/0
+      SOLAROPS_POSTGRES_DSN: postgresql+psycopg://${POSTGRES_USER:-solarops}:${POSTGRES_PASSWORD:-solarops}@postgres:5432/${POSTGRES_DB:-solarops}
+      SOLAROPS_MLFLOW_TRACKING_URI: http://mlflow:5000
+      SOLAROPS_API_KEY: ${SOLAROPS_API_KEY:-solarops-demo-key}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    profiles: ["monitoring"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.docker.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    profiles: ["monitoring"]
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  redis_data:
+  postgres_data:
+  mlflow_artifacts:

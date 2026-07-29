@@ -1,0 +1,37 @@
+# Version control / editor
+.git
+.gitignore
+.vscode
+.idea
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+*.egg-info
+.mypy_cache
+.ruff_cache
+.pytest_cache
+htmlcov
+.coverage
+
+# Tests and docs — not needed inside the running image
+tests
+docs
+*.md
+!README.md
+
+# Local secrets and infra state — never bake into the image
+.env
+mlruns
+mlflow.db
+
+# Not part of the API image
+dashboard
+monitoring
+docker
+docker-compose*.yml
+Dockerfile
+.dockerignore

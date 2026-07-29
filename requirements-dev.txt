@@ -1,0 +1,9 @@
+-r requirements.txt
+
+pytest>=8
+pytest-cov
+ruff
+mypy
+import-linter
+fakeredis
+httpx>=0.27
