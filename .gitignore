@@ -27,3 +27,10 @@ htmlcov/
 # Local MLflow tracking state (only relevant to local, non-Docker runs)
 mlruns/
 mlflow.db
+
+# Personal learning/reference docs — kept locally, not for the public repo
+/HARDWARE_INTEGRATION.md
+/LEARNING_PATH.md
+/ONBOARDING.md
+/PROJECT_DEEP_DIVE.md
+/docs/CODE-WALKTHROUGH.md
