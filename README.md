@@ -18,6 +18,9 @@ For a local, no-Docker loop: `python scripts/run_api.py` (API on
 `127.0.0.1:8000`) and `streamlit run dashboard/app.py` (operator UI on
 `127.0.0.1:8501`) against the in-memory/fake adapters every test also uses.
 
+**New to this codebase?** Start with [`ONBOARDING.md`](ONBOARDING.md) — a
+full walkthrough of every folder, written for a first day on the project.
+
 ## Architecture
 
 A bounded context per reasoning/execution concern (Doc 8), wired together at

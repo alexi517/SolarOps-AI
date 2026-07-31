@@ -10,6 +10,7 @@ the same walkthrough proven via raw HTTP in Phase 7a's tests, now via the UI.
 
 from __future__ import annotations
 
+import dataclasses
 import socket
 import threading
 import time
@@ -68,24 +69,42 @@ def _page(name: str) -> AppTest:
     return AppTest.from_file(str(DASHBOARD_DIR / "pages" / f"{name}.py"), default_timeout=30)
 
 
-def _ensure_pending_via_dashboard(max_attempts: int = 30) -> AppTest:
-    """Real, physically-simulated conditions decide whether a given decision
-    cycle pauses (Phase 6d: via risk or confidence escalation), so click
-    "Run decision cycle now" across attempts for one that does, rather than
-    assume any single click produces a pending approval — mirrors
-    tests/unit/api/conftest.py's ensure_pending_approval()."""
-    for _ in range(max_attempts):
-        recommendations = _page("recommendations")
-        recommendations.run()
-        recommendations.button[0].click().run()
-        assert not recommendations.exception
+def _ensure_pending_via_dashboard(max_attempts: int = 5) -> AppTest:
+    """Click "Run decision cycle now" until one pauses for approval.
 
-        approvals = _page("approvals")
-        approvals.run()
-        assert not approvals.exception
-        if any(b.label == "Approve" for b in approvals.button):
-            return approvals
-    raise AssertionError(f"no pending approval appeared after {max_attempts} attempts")
+    Retrying and hoping a cycle happens to land on HIGH risk isn't reliable
+    under calm real conditions (see tests/unit/api/conftest.py's
+    ensure_pending_approval() for the full explanation) — so this forces the
+    same site's Policy into maintenance mode (with an override, so every
+    action type still passes the Policy gate) for the duration of the call,
+    which makes RiskAssessor classify HIGH unconditionally. ``live_api`` runs
+    the real FastAPI ``app`` object in-process (just on a background
+    thread), so ``app.state.composition`` is reachable directly here, the
+    same way the API-level tests reach it via ``client.app.state``.
+    """
+    from solarops.api.app import app as fastapi_app
+
+    composition = fastapi_app.state.composition
+    original_policy = composition.policy_repository.get_current(composition.site_id)
+    forced_policy = dataclasses.replace(
+        original_policy, maintenance_mode=True, maintenance_override=True
+    )
+    composition.policy_repository.save(forced_policy)
+    try:
+        for _ in range(max_attempts):
+            recommendations = _page("recommendations")
+            recommendations.run()
+            recommendations.button[0].click().run()
+            assert not recommendations.exception
+
+            approvals = _page("approvals")
+            approvals.run()
+            assert not approvals.exception
+            if any(b.label == "Approve" for b in approvals.button):
+                return approvals
+        raise AssertionError(f"no pending approval appeared after {max_attempts} attempts")
+    finally:
+        composition.policy_repository.save(original_policy)
 
 
 def test_overview_renders_the_current_state(live_api):

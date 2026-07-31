@@ -197,7 +197,11 @@ class RuleBasedOptimiser:
                 ),
             )
 
-        if soc > self._config.battery_healthy_max_soc_pct and state.building_load.value > 0:
+        if (
+            soc > self._config.battery_healthy_max_soc_pct
+            and state.building_load.value > 0
+            and state.grid_status is not GridStatus.CONNECTED
+        ):
             power = min(state.building_load.value, constraints.battery_max_discharge_power.value)
             return _Candidate(
                 action=ActionType.DISCHARGE_BATTERY,
@@ -241,7 +245,8 @@ class RuleBasedOptimiser:
                 ),
             )
 
-        if net < -self._config.self_consumption_min_surplus_kw:
+        grid_needs_help = state.grid_status is not GridStatus.CONNECTED
+        if net < -self._config.self_consumption_min_surplus_kw and grid_needs_help:
             deficit = -net
             power = min(deficit, constraints.battery_max_discharge_power.value)
             return _Candidate(
@@ -262,6 +267,13 @@ class RuleBasedOptimiser:
     def _cost_candidate(self, context: DecisionContext) -> _Candidate | None:
         state = context.energy_state
         constraints = context.operating_constraints
+        if state.grid_status is GridStatus.CONNECTED:
+            # Grid-priority policy: with a healthy, connected grid, the battery
+            # rests entirely rather than being cycled to shave import cost.
+            # Cost-based discharge only makes sense once the grid itself is
+            # already the reason for concern (down or unstable) — priority 2
+            # already covers that case.
+            return None
         if state.grid_power.value <= 0:
             return None  # not importing
 

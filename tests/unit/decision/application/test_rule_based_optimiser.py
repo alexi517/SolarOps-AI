@@ -97,14 +97,32 @@ def test_solar_surplus_recommends_charge():
     assert ranked.top.params["power_kw"] == 40.0
 
 
-def test_solar_deficit_recommends_discharge():
+def test_solar_deficit_with_grid_connected_rests_the_battery():
+    # Grid-priority: a connected, healthy grid means the battery rests
+    # entirely, even with a solar deficit that self-consumption could
+    # otherwise cover — cost-driven discharge only kicks in once the grid
+    # itself is the problem (see the unstable-grid test below).
     engine = make_engine()
     state = make_state(
         solar_power=Power(10.0), building_load=Power(40.0), battery_soc=StateOfCharge(50.0)
     )
     ranked = engine.recommend(make_context(state, make_constraints()))
+    assert ranked.top.action is ActionType.HOLD_BATTERY
+
+
+def test_solar_deficit_during_unstable_grid_discharges_via_reliability():
+    # Same deficit, but the grid is fluctuating — reliability (priority 2)
+    # now applies and outranks self-consumption's own discharge candidate.
+    engine = make_engine()
+    state = make_state(
+        solar_power=Power(10.0),
+        building_load=Power(40.0),
+        battery_soc=StateOfCharge(50.0),
+        grid_status=GridStatus.UNSTABLE,
+    )
+    ranked = engine.recommend(make_context(state, make_constraints()))
     assert ranked.top.action is ActionType.DISCHARGE_BATTERY
-    assert ranked.top.params["power_kw"] == 30.0
+    assert ranked.top.params["power_kw"] == 40.0  # reliability covers the full load
 
 
 def test_grid_outage_with_healthy_soc_discharges_for_reliability():
@@ -136,14 +154,27 @@ def test_battery_below_healthy_band_charges_to_restore_reserve():
     assert "healthy" in ranked.top.reason.lower()
 
 
-def test_battery_above_healthy_band_with_load_discharges():
+def test_battery_above_healthy_band_with_grid_connected_rests():
+    # Grid-priority: sitting above the healthy SOC band isn't urgent enough
+    # to draw the battery down while the grid is fine and available.
     engine = make_engine()
     state = make_state(
         solar_power=Power(0.0), building_load=Power(10.0), battery_soc=StateOfCharge(90.0)
     )
     ranked = engine.recommend(make_context(state, make_constraints()))
+    assert ranked.top.action is ActionType.HOLD_BATTERY
+
+
+def test_battery_above_healthy_band_discharges_during_grid_outage():
+    engine = make_engine()
+    state = make_state(
+        solar_power=Power(0.0),
+        building_load=Power(10.0),
+        battery_soc=StateOfCharge(90.0),
+        grid_status=GridStatus.OUTAGE,
+    )
+    ranked = engine.recommend(make_context(state, make_constraints()))
     assert ranked.top.action is ActionType.DISCHARGE_BATTERY
-    assert "healthy" in ranked.top.reason.lower()
 
 
 def test_overheating_vetoes_charge_and_falls_back_to_hold():
@@ -167,14 +198,47 @@ def test_charging_at_max_soc_is_vetoed_in_favour_of_battery_health_discharge():
     assert any("CHARGE_BATTERY" in r and "policy max" in r for r in ranked.top.risks)
 
 
-def test_discharging_at_min_soc_is_vetoed_in_favour_of_battery_health_charge():
+def test_at_min_soc_with_grid_connected_only_charges_never_discharges():
+    # Grid-priority: with the grid connected, no rule ever proposes
+    # discharging at all (reliability, self-consumption's discharge branch,
+    # battery-health's discharge branch, and cost all require a
+    # down/unstable grid) — battery health's charge candidate is the only
+    # thing on the table, no safety veto needed to rule out a discharge.
     engine = make_engine()
     state = make_state(
         solar_power=Power(0.0), building_load=Power(20.0), battery_soc=StateOfCharge(10.0)
     )
     ranked = engine.recommend(make_context(state, make_constraints()))
     assert ranked.top.action is ActionType.CHARGE_BATTERY
-    assert any("DISCHARGE_BATTERY" in r and "policy min" in r for r in ranked.top.risks)
+
+
+def test_cost_discharge_rests_while_grid_connected():
+    # Grid-priority: importing from a healthy, connected grid is not by
+    # itself a reason to cycle the battery — cost-based discharge (priority
+    # 5) is disabled entirely while the grid is up.
+    engine = make_engine()
+    state = make_state(
+        solar_power=Power(0.0),
+        building_load=Power(0.0),
+        battery_soc=StateOfCharge(50.0),
+        grid_power=Power(20.0),
+    )
+    ranked = engine.recommend(make_context(state, make_constraints()))
+    assert ranked.top.action is ActionType.HOLD_BATTERY
+
+
+def test_cost_discharge_fires_once_grid_is_unstable_and_importing():
+    engine = make_engine()
+    state = make_state(
+        solar_power=Power(0.0),
+        building_load=Power(0.0),
+        battery_soc=StateOfCharge(50.0),
+        grid_power=Power(20.0),
+        grid_status=GridStatus.UNSTABLE,
+    )
+    ranked = engine.recommend(make_context(state, make_constraints()))
+    assert ranked.top.action is ActionType.DISCHARGE_BATTERY
+    assert "offsets cost" in ranked.top.reason.lower()
 
 
 def test_maintenance_mode_vetoes_charging():

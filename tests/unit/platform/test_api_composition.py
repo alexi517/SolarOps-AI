@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 
 import pytest
@@ -64,21 +65,33 @@ def test_run_decision_cycle_produces_a_ranked_list_and_a_command(composition):
 
 
 def test_default_site_config_can_produce_a_pause_for_approval(composition):
-    # Real, physically-simulated conditions decide whether a given cycle
-    # pauses — via HIGH risk, or via Phase 6d's confidence escalation, or
-    # neither — so retry across cycles for one that does rather than assume
-    # any single call produces it (see api/conftest.py's
-    # ensure_pending_approval, which the API-level tests use the same way).
-    for _ in range(30):
-        _ranked, command = composition.run_decision_cycle()
-        if command.status.value == "AWAITING_APPROVAL":
-            assert command.risk_assessment.level in (
-                RiskLevel.LOW,
-                RiskLevel.MEDIUM,
-                RiskLevel.HIGH,
-            )
-            return
-    raise AssertionError("no cycle paused for approval after 30 attempts")
+    # Retrying real decision cycles and hoping one lands on HIGH risk isn't
+    # reliable — under calm conditions (a common real state) risk stays LOW
+    # no matter how many times you retry a call that barely advances
+    # simulated time. Forcing Policy into maintenance mode (with an
+    # override, so every action type still passes the Policy gate) makes
+    # RiskAssessor classify HIGH unconditionally (see
+    # safety/application/risk_assessor.py), independent of what Decision
+    # actually recommends — the same approach as api/conftest.py's
+    # ensure_pending_approval. The original policy is restored afterwards.
+    original_policy = composition.policy_repository.get_current(composition.site_id)
+    forced_policy = dataclasses.replace(
+        original_policy, maintenance_mode=True, maintenance_override=True
+    )
+    composition.policy_repository.save(forced_policy)
+    try:
+        for _ in range(5):
+            _ranked, command = composition.run_decision_cycle()
+            if command.status.value == "AWAITING_APPROVAL":
+                assert command.risk_assessment.level in (
+                    RiskLevel.LOW,
+                    RiskLevel.MEDIUM,
+                    RiskLevel.HIGH,
+                )
+                return
+        raise AssertionError("no cycle paused for approval after 5 attempts")
+    finally:
+        composition.policy_repository.save(original_policy)
 
 
 def test_current_decision_context_reflects_a_real_active_anomaly(composition):
