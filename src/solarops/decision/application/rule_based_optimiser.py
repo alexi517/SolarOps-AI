@@ -176,24 +176,39 @@ class RuleBasedOptimiser:
         constraints = context.operating_constraints
         soc = state.battery_soc.value
 
-        if soc < self._config.battery_healthy_min_soc_pct:
+        grid_available = state.grid_status is GridStatus.CONNECTED
+        # While the grid is up, use that window to top the battery up toward
+        # the healthy band's *ceiling* — not just rescue it once it's nearly
+        # empty. An unreliable grid (e.g. NEPA) means every minute it's up is
+        # a chance to build reserve for the next outage, so charging doesn't
+        # wait for a low-SOC emergency the way it does when grid is down.
+        charge_below = (
+            self._config.battery_healthy_max_soc_pct
+            if grid_available
+            else self._config.battery_healthy_min_soc_pct
+        )
+        if soc < charge_below:
             surplus = max(state.solar_power.value - state.building_load.value, 0.0)
-            if surplus <= 0 and state.grid_status is not GridStatus.CONNECTED:
+            if surplus <= 0 and not grid_available:
                 # Nothing to charge from: no solar surplus, and the grid — the
                 # only other source this rule considers — is down.
                 return None
             power = surplus if surplus > 0 else self._config.reserve_charge_power_kw
             power = min(power, constraints.battery_max_charge_power.value)
             source = "solar surplus" if surplus > 0 else "grid (no solar surplus available)"
+            if soc < self._config.battery_healthy_min_soc_pct:
+                why = f"Battery SOC is below the healthy reserve band; topping up from {source}."
+            else:
+                why = f"Grid is available; topping up toward the healthy ceiling from {source}."
             return _Candidate(
                 action=ActionType.CHARGE_BATTERY,
                 params={"power_kw": round(power, 2)},
                 priority=3,
-                expected_benefit="Restores the battery to its healthy reserve band.",
-                why=f"Battery SOC is below the healthy reserve band; topping up from {source}.",
+                expected_benefit="Builds battery reserve while the grid can supply charging power.",
+                why=why,
                 evidence=(
-                    f"battery_soc={soc:.1f}% < healthy min "
-                    f"{self._config.battery_healthy_min_soc_pct:.1f}%",
+                    f"battery_soc={soc:.1f}% < {charge_below:.1f}% "
+                    f"({'healthy min' if not grid_available else 'healthy max — grid available'})",
                 ),
             )
 

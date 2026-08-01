@@ -97,17 +97,22 @@ def test_solar_surplus_recommends_charge():
     assert ranked.top.params["power_kw"] == 40.0
 
 
-def test_solar_deficit_with_grid_connected_rests_the_battery():
-    # Grid-priority: a connected, healthy grid means the battery rests
-    # entirely, even with a solar deficit that self-consumption could
-    # otherwise cover — cost-driven discharge only kicks in once the grid
-    # itself is the problem (see the unstable-grid test below).
+def test_solar_deficit_with_grid_connected_tops_up_battery_not_discharge():
+    # Grid-priority: a connected, healthy grid means the battery never
+    # discharges to help — self-consumption's discharge candidate stays
+    # gated off (cost-driven discharge only kicks in once the grid itself is
+    # the problem, see the unstable-grid test below). But "resting" isn't
+    # the same as "doing nothing": with SOC below the healthy ceiling and
+    # the grid available, the battery-health rule still tops it up a little
+    # from grid — an unreliable grid means every available minute is a
+    # chance to build reserve for the next outage.
     engine = make_engine()
     state = make_state(
         solar_power=Power(10.0), building_load=Power(40.0), battery_soc=StateOfCharge(50.0)
     )
     ranked = engine.recommend(make_context(state, make_constraints()))
-    assert ranked.top.action is ActionType.HOLD_BATTERY
+    assert ranked.top.action is ActionType.CHARGE_BATTERY
+    assert ranked.top.params["power_kw"] == 10.0  # reserve_charge_power_kw default
 
 
 def test_solar_deficit_during_unstable_grid_discharges_via_reliability():
@@ -212,10 +217,13 @@ def test_at_min_soc_with_grid_connected_only_charges_never_discharges():
     assert ranked.top.action is ActionType.CHARGE_BATTERY
 
 
-def test_cost_discharge_rests_while_grid_connected():
-    # Grid-priority: importing from a healthy, connected grid is not by
-    # itself a reason to cycle the battery — cost-based discharge (priority
-    # 5) is disabled entirely while the grid is up.
+def test_cost_discharge_never_fires_while_grid_connected():
+    # Grid-priority: importing from a healthy, connected grid is never a
+    # reason to *discharge* the battery — cost-based discharge (priority 5)
+    # stays disabled while the grid is up. It still charges though (battery
+    # health, priority 3, wins here): SOC is below the healthy ceiling and
+    # the grid can supply the charging power, so topping up is correct even
+    # while separately importing to cover the (zero, in this case) load.
     engine = make_engine()
     state = make_state(
         solar_power=Power(0.0),
@@ -224,7 +232,8 @@ def test_cost_discharge_rests_while_grid_connected():
         grid_power=Power(20.0),
     )
     ranked = engine.recommend(make_context(state, make_constraints()))
-    assert ranked.top.action is ActionType.HOLD_BATTERY
+    assert ranked.top.action is ActionType.CHARGE_BATTERY
+    assert "offsets cost" not in ranked.top.reason.lower()
 
 
 def test_cost_discharge_fires_once_grid_is_unstable_and_importing():
@@ -279,18 +288,22 @@ def test_missing_load_and_battery_soc_forecasts_are_always_noted():
 
 
 def test_missing_solar_forecast_is_noted_when_self_consumption_fires():
+    # SOC held at 90 (above the healthy ceiling) so battery-health's own
+    # charge candidate doesn't also apply here and outrank this one — keeps
+    # this test isolated to self-consumption's own evidence/forecast note.
     engine = make_engine()
     state = make_state(
-        solar_power=Power(80.0), building_load=Power(40.0), battery_soc=StateOfCharge(50.0)
+        solar_power=Power(80.0), building_load=Power(40.0), battery_soc=StateOfCharge(90.0)
     )
     ranked = engine.recommend(make_context(state, make_constraints()))
     assert "solar forecast unavailable; using current solar reading only" in ranked.top.evidence
 
 
 def test_registered_solar_forecast_is_used_when_self_consumption_fires():
+    # Same isolation reasoning as above.
     engine = make_engine()
     state = make_state(
-        solar_power=Power(80.0), building_load=Power(40.0), battery_soc=StateOfCharge(50.0)
+        solar_power=Power(80.0), building_load=Power(40.0), battery_soc=StateOfCharge(90.0)
     )
     forecast = make_forecast(ForecastKind.SOLAR_GENERATION, 60.0)
     context = DecisionContext(
@@ -311,10 +324,26 @@ def test_never_returns_an_empty_ranking():
     assert len(ranked.recommendations) >= 1
 
 
-def test_steady_state_defaults_to_hold():
+def test_steady_state_with_room_to_charge_tops_up_from_grid():
+    # Solar exactly covers load (no self-consumption surplus/deficit either
+    # way) — but SOC is below the healthy ceiling and grid is available, so
+    # battery-health still opportunistically tops it up. Not truly "steady
+    # state" once you count reserve-building as a real, ongoing action.
     engine = make_engine()
     state = make_state(
         solar_power=Power(20.0), building_load=Power(20.0), battery_soc=StateOfCharge(50.0)
+    )
+    ranked = engine.recommend(make_context(state, make_constraints()))
+    assert ranked.top.action is ActionType.CHARGE_BATTERY
+    assert ranked.top.params["power_kw"] == 10.0
+
+
+def test_steady_state_with_full_battery_defaults_to_hold():
+    # Same balanced solar/load, but SOC is already at the healthy ceiling —
+    # now there's genuinely nothing to do.
+    engine = make_engine()
+    state = make_state(
+        solar_power=Power(20.0), building_load=Power(20.0), battery_soc=StateOfCharge(85.0)
     )
     ranked = engine.recommend(make_context(state, make_constraints()))
     assert ranked.top.action is ActionType.HOLD_BATTERY
