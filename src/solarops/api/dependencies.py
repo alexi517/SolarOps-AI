@@ -16,6 +16,14 @@ class APISettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SOLAROPS_", env_file=".env", extra="ignore")
 
     api_key: str = "solarops-demo-key"
+    # Comma-separated browser origins allowed to call this API (CORS). Defaults
+    # cover the Vite dev server for dashboard-react/; add your deployed
+    # frontend's origin here in production.
+    cors_allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    @property
+    def cors_allowed_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
 
 def get_composition(request: Request) -> SystemComposition:

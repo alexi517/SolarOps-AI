@@ -10,8 +10,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from solarops.api.dependencies import APISettings
 from solarops.api.errors import register_exception_handlers
 from solarops.api.routers import anomalies, approvals, commands, decisions, forecasts, ops, state
 from solarops.observability.metrics import api_request_latency_seconds, api_requests_total
@@ -56,6 +58,13 @@ app = FastAPI(
 )
 
 app.add_middleware(MetricsMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=APISettings().cors_allowed_origins_list,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key"],
+)
 register_exception_handlers(app)
 
 app.include_router(state.router)
