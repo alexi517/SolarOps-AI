@@ -19,10 +19,17 @@ class FakeTelemetrySource:
         return self._telemetry
 
 
-def make_service(telemetry=None, now=None, staleness_threshold=timedelta(seconds=30)):
+def make_service(
+    telemetry=None,
+    now=None,
+    staleness_threshold=timedelta(seconds=30),
+    check_staleness=True,
+):
     telemetry = telemetry or make_telemetry(site_id=SITE_ID, timestamp=READING_TIME)
     clock = FixedClock(now or READING_TIME)
-    return TelemetryIngestionService(FakeTelemetrySource(telemetry), clock, staleness_threshold)
+    return TelemetryIngestionService(
+        FakeTelemetrySource(telemetry), clock, staleness_threshold, check_staleness=check_staleness
+    )
 
 
 def test_fresh_normal_reading_produces_only_telemetry_ingested():
@@ -58,6 +65,32 @@ def test_grid_outage_marks_offline():
         site_id=SITE_ID, timestamp=READING_TIME, grid_status=GridStatus.OUTAGE
     )
     service = make_service(telemetry=telemetry)
+    state, events = service.ingest(SITE_ID)
+
+    assert state.any_asset_offline is True
+    assert any(isinstance(e, AssetOffline) for e in events)
+
+
+def test_check_staleness_false_ignores_reading_age():
+    # The composition root disables this for the simulated twin (its clock
+    # and the real clock are intentionally independent — see
+    # platform/api_composition.py) — a huge age gap must never mark it
+    # offline when the check is off, however large.
+    service = make_service(now=READING_TIME + timedelta(hours=6), check_staleness=False)
+    state, events = service.ingest(SITE_ID)
+
+    assert state.any_asset_offline is False
+    assert [type(e) for e in events] == [TelemetryIngested]
+
+
+def test_check_staleness_false_still_detects_real_fault_conditions():
+    # Disabling the age check only silences the age check — inverter/grid
+    # fault detection (genuine simulated conditions, not clock drift) still
+    # applies.
+    telemetry = make_telemetry(
+        site_id=SITE_ID, timestamp=READING_TIME, grid_status=GridStatus.OUTAGE
+    )
+    service = make_service(telemetry=telemetry, check_staleness=False)
     state, events = service.ingest(SITE_ID)
 
     assert state.any_asset_offline is True

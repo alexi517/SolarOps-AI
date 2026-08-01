@@ -142,7 +142,17 @@ class SystemComposition:
             start_time=datetime.now(UTC),
         )
         self.telemetry_source = TwinTelemetrySource(self.twin)
-        self.ingestion = TelemetryIngestionService(self.telemetry_source, clock)
+        # check_staleness=False: the twin's simulated clock and the real
+        # clock are intentionally independent (the twin only advances when
+        # ticked, not with real elapsed time) — comparing them would flag
+        # every reading "stale"/offline the moment more than
+        # staleness_threshold of real time passes between decision cycles,
+        # which is virtually every real-world click. A twin reading is
+        # synchronous and always current by construction; this check only
+        # means something once a real hardware source is wired in instead.
+        self.ingestion = TelemetryIngestionService(
+            self.telemetry_source, clock, check_staleness=False
+        )
         self.state_store = (
             RedisStateStore(redis.Redis.from_url(self.settings.redis_url))
             if self.settings.use_real_infra

@@ -15,7 +15,16 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from solarops.api.dependencies import APISettings
 from solarops.api.errors import register_exception_handlers
-from solarops.api.routers import anomalies, approvals, commands, decisions, forecasts, ops, state
+from solarops.api.routers import (
+    anomalies,
+    approvals,
+    commands,
+    decisions,
+    forecasts,
+    ops,
+    simulate,
+    state,
+)
 from solarops.observability.metrics import api_request_latency_seconds, api_requests_total
 from solarops.platform.api_composition import build_system_composition
 
@@ -74,3 +83,4 @@ app.include_router(decisions.router)
 app.include_router(commands.router)
 app.include_router(approvals.router)
 app.include_router(ops.router)
+app.include_router(simulate.router)
