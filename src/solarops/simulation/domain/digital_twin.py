@@ -131,7 +131,11 @@ class DigitalTwin:
 
         battery_charge_draw_kw = max(0.0, battery_out.power_kw)
         net_ac_available_kw = inverter_out.output_kw - battery_charge_draw_kw
-        grid_power_kw = building_load_kw - net_ac_available_kw
+        # Never negative (never "export"): this site's grid connection is a
+        # one-way, non-net-metered utility supply (e.g. NEPA) — it has no
+        # mechanism to buy power back. Any solar surplus the battery isn't
+        # absorbing is curtailed here rather than fed backward into the grid.
+        grid_power_kw = max(0.0, building_load_kw - net_ac_available_kw)
         grid_out = self.grid.step(grid_power_kw)
 
         fault_codes: list[str] = []

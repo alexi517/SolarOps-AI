@@ -1,3 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Existing hand-written CSS below is unchanged and still in full effect —
+   Tailwind is additive for now, migrating gradually, not replacing this. */
+
 :root {
   color-scheme: light;
   --page-bg: #eaf5ec;
@@ -196,7 +203,8 @@ body {
   border-radius: 20px;
   box-shadow: var(--shadow-card);
   padding: 18px;
-  margin-bottom: 14px;
+  /* No margin-bottom: cards now sit in a Tailwind grid (App.jsx), which
+     handles spacing via `gap` — a margin here would double up with it. */
 }
 .card-title {
   font-size: 13px;

@@ -44,3 +44,18 @@ def test_grid_outage_fault_appears_in_fault_codes():
     state = twin.tick()
     assert "GRID_OUTAGE" in state.fault_codes
     assert state.grid_status is GridStatus.OUTAGE
+
+
+def test_grid_power_never_goes_negative_even_with_large_solar_surplus():
+    # This site's grid connection is a one-way, non-net-metered utility
+    # supply (e.g. NEPA) — it never buys power back. A tiny load against a
+    # large solar array guarantees a surplus at midday with nothing to
+    # absorb it (battery isn't commanded to charge), which used to produce
+    # a negative ("export") grid_power_kw before this was clamped.
+    twin = make_twin(
+        solar_capacity_kw=500.0,
+        building_baseline_load_kw=0.5,
+        building_peak_load_kw=1.0,
+    )
+    states = twin.run(steps=288)  # 24h at 5-minute resolution
+    assert all(s.grid_power.value >= 0.0 for s in states)

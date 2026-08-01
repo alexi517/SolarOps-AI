@@ -34,3 +34,6 @@ mlflow.db
 /ONBOARDING.md
 /PROJECT_DEEP_DIVE.md
 /docs/CODE-WALKTHROUGH.md
+
+# Local Claude Code tool-permission allowlist — machine/session-specific
+/.claude/

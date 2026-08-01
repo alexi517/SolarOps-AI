@@ -50,6 +50,7 @@ export const getAnomalies = () => request(`/sites/${SITE_ID}/anomalies`);
 export const getRecommendations = () => request(`/sites/${SITE_ID}/recommendations`);
 export const getPendingApprovals = () => request(`/sites/${SITE_ID}/approvals/pending`);
 export const getCommands = () => request(`/sites/${SITE_ID}/commands`);
+export const getCommand = (commandId) => request(`/commands/${commandId}`);
 export const runDecisionCycle = () => request(`/sites/${SITE_ID}/decision-cycle`, { method: "POST" });
 
 const OPERATOR_ID = "dashboard-react-operator";
