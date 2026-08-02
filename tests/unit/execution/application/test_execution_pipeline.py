@@ -106,6 +106,14 @@ def make_state(*, any_asset_offline: bool = False, **overrides) -> EnergyState:
     return EnergyState.from_telemetry(telemetry, any_asset_offline=any_asset_offline)
 
 
+class FakeNotifier:
+    def __init__(self) -> None:
+        self.approval_calls = []
+
+    def notify_approval_needed(self, command) -> None:
+        self.approval_calls.append(command)
+
+
 class Rig:
     """Everything a pipeline needs, wired once, with the pieces a test wants
     to poke (policy, state store, hardware) exposed directly."""
@@ -118,6 +126,7 @@ class Rig:
         state: EnergyState | None = None,
         seed_state: bool = True,
         hardware_outcome: ExecutionOutcome = ExecutionOutcome.SUCCESS,
+        notifier: FakeNotifier | None = None,
     ):
         clock = FixedClock(NOW)
         self.clock = clock
@@ -146,6 +155,7 @@ class Rig:
         verification_service = VerificationService(state_manager, clock)
         self.command_repository = InMemoryCommandRepository()
         self.audit_log = InMemoryAuditLog()
+        self.notifier = notifier
 
         self.pipeline = ExecutionPipeline(
             command_planner=command_planner,
@@ -162,6 +172,7 @@ class Rig:
             policy_repository=self.policy_repository,
             safety_limits_provider=self.limits_provider,
             clock=clock,
+            notifier=notifier,
         )
 
 
@@ -246,6 +257,28 @@ def test_high_risk_pauses_then_approve_resumes_to_completion():
     decision = ApprovalDecision(outcome=ApprovalOutcome.APPROVED, decided_at=NOW)
     resumed = rig.pipeline.resume_after_approval(command, decision)
     assert resumed.status is CommandStatus.COMPLETED
+
+
+def test_notifier_is_called_when_a_command_pauses_for_approval():
+    notifier = FakeNotifier()
+    rig = Rig(notifier=notifier)
+    recommendation = make_recommendation(params={"power_kw": 45.0})  # large swing -> HIGH
+    command = rig.pipeline.run(recommendation)
+
+    assert command.status is CommandStatus.AWAITING_APPROVAL
+    assert notifier.approval_calls == [command]
+
+
+def test_notifier_is_not_called_when_a_command_auto_completes():
+    notifier = FakeNotifier()
+    rig = Rig(
+        notifier=notifier,
+        state=make_state(battery_soc=StateOfCharge(50.0), battery_mode=BatteryMode.CHARGING),
+    )
+    command = rig.pipeline.run(make_recommendation())
+
+    assert command.status is CommandStatus.COMPLETED
+    assert notifier.approval_calls == []
 
 
 def test_high_risk_reject_terminates_without_dispatch():

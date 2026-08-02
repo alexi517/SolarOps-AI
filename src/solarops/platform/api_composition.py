@@ -14,6 +14,7 @@ other file under ``platform/``.
 from __future__ import annotations
 
 import contextlib
+import threading
 import time
 from collections import deque
 from datetime import UTC, datetime, timedelta
@@ -90,6 +91,7 @@ from solarops.platform.forecast_wiring import (
 from solarops.platform.forecast_wiring import (
     build_twin_historical_data_source as build_forecast_historical_data_source,
 )
+from solarops.platform.notifications import NullNotifier, WhatsAppNotifier
 from solarops.platform.safety_wiring import build_policy, build_safety_limits
 from solarops.platform.settings import PlatformSettings
 from solarops.platform.twin_hardware_interface import SimulatedHardwareInterface
@@ -101,7 +103,7 @@ from solarops.safety.infrastructure.in_memory_policy_repository import InMemoryP
 from solarops.safety.infrastructure.static_safety_limits_provider import (
     StaticSafetyLimitsProvider,
 )
-from solarops.shared_kernel import Clock, SiteId, SystemClock
+from solarops.shared_kernel import Clock, GridStatus, SiteId, SystemClock
 from solarops.simulation.domain.digital_twin import DigitalTwin
 from solarops.simulation.infrastructure.config import SimulatorConfig, SiteConfig
 from solarops.telemetry.application.ingestion_service import TelemetryIngestionService
@@ -134,6 +136,10 @@ class SystemComposition:
         self.site_config = site_config
         self.clock = clock
         self.settings = settings or PlatformSettings()
+        # Guards run_decision_cycle() so a manual click (POST /decision-cycle,
+        # handled on its own thread) and an automatic scheduler tick never run
+        # concurrently against the same in-memory state/repositories.
+        self._decision_cycle_lock = threading.Lock()
 
         # --- Simulation + Telemetry (Phases 2-3) ---
         self.twin = DigitalTwin(
@@ -247,6 +253,15 @@ class SystemComposition:
             if self.settings.use_real_infra
             else InMemoryAuditLog()
         )
+        self.notifier = (
+            WhatsAppNotifier(self.settings.whatsapp_phone, self.settings.whatsapp_api_key)
+            if self.settings.whatsapp_configured
+            else NullNotifier()
+        )
+        # None until the first reading — a first reading isn't a "change",
+        # so it must never itself trigger notify_grid_status_changed().
+        self._last_grid_status: GridStatus | None = None
+
         self.execution_pipeline = ExecutionPipeline(
             command_planner=CommandPlanner(clock),
             policy_validator=PolicyValidator(self.policy_repository, clock),
@@ -264,6 +279,7 @@ class SystemComposition:
             clock=clock,
             telemetry_refresh=self.refresh_telemetry,
             metrics=PIPELINE_METRICS,
+            notifier=self.notifier,
         )
 
         self.refresh_telemetry()  # a real reading before any request arrives
@@ -300,6 +316,13 @@ class SystemComposition:
                 anomalies_detected_total.labels(
                     anomaly_type=event.anomaly_type.value, severity=event.severity.value
                 ).inc()
+                self.notifier.notify_anomaly_detected(event)
+
+        # None on the very first reading — that's not a "change", so it must
+        # never itself trigger a notification.
+        if self._last_grid_status is not None and self._last_grid_status is not state.grid_status:
+            self.notifier.notify_grid_status_changed(self._last_grid_status, state.grid_status)
+        self._last_grid_status = state.grid_status
 
         return state
 
@@ -361,14 +384,22 @@ class SystemComposition:
         """Refresh telemetry, reason over it, and run the top recommendation
         through the real Phase 5 pipeline — the engine never touches the twin
         or builds a command itself (ADR-010); this is the pipeline doing that,
-        exactly as every prior script already demonstrates."""
-        self.refresh_telemetry()
-        context = self.current_decision_context()
-        assert context is not None, "refresh_telemetry() just ran; state must exist"
+        exactly as every prior script already demonstrates.
 
-        ranked = self.recommend(context)
-        command = self.execution_pipeline.run(ranked.top)
-        return ranked, command
+        Locked (``_decision_cycle_lock``) so a manual trigger and an
+        automatic scheduler tick (``platform/auto_decision_cycle.py``) can
+        never run concurrently against the same in-memory state — whichever
+        arrives second simply waits its turn rather than racing.
+        """
+        with self._decision_cycle_lock:
+            self.refresh_telemetry()
+            context = self.current_decision_context()
+            assert context is not None, "refresh_telemetry() just ran; state must exist"
+
+            ranked = self.recommend(context)
+            command = self.execution_pipeline.run(ranked.top)
+            self.notifier.notify_decision_cycle_result(ranked.top, command)
+            return ranked, command
 
 
 def build_system_composition(

@@ -13,7 +13,7 @@ from solarops.anomaly.domain.anomaly_type import AnomalyType
 from solarops.anomaly.domain.severity import Severity
 from solarops.forecast.domain.forecast_kind import ForecastKind
 from solarops.platform.api_composition import build_system_composition
-from solarops.shared_kernel import AnomalyId, AssetId, RiskLevel
+from solarops.shared_kernel import AnomalyId, AssetId, GridStatus, RiskLevel
 
 
 @pytest.fixture(scope="module")
@@ -119,3 +119,55 @@ def test_current_decision_context_reflects_a_real_active_anomaly(composition):
     context = composition.current_decision_context()
     assert context is not None
     assert context.active_anomaly_count == 1
+
+
+class _FakeNotifier:
+    def __init__(self) -> None:
+        self.grid_changes = []
+        self.decision_cycle_calls = []
+
+    def notify_approval_needed(self, command) -> None:
+        pass
+
+    def notify_anomaly_detected(self, event) -> None:
+        pass
+
+    def notify_decision_cycle_result(self, recommendation, command) -> None:
+        self.decision_cycle_calls.append((recommendation, command))
+
+    def notify_grid_status_changed(self, old_status, new_status) -> None:
+        self.grid_changes.append((old_status, new_status))
+
+
+def test_grid_status_change_triggers_a_notification_first_reading_does_not(composition):
+    # composition.notifier is read live by refresh_telemetry()/
+    # run_decision_cycle() (unlike the notifier ExecutionPipeline was built
+    # with once, at construction) — swapping it here really does redirect
+    # these two notification paths, restored after so other tests in this
+    # module aren't affected.
+    original_notifier = composition.notifier
+    fake = _FakeNotifier()
+    composition.notifier = fake
+    try:
+        composition.twin.inject_fault("grid", None)
+        composition.refresh_telemetry()  # establish a CONNECTED baseline
+        assert fake.grid_changes == []  # a reading alone is never a "change"
+
+        composition.twin.inject_fault("grid", "OUTAGE")
+        composition.refresh_telemetry()
+        assert (GridStatus.CONNECTED, GridStatus.OUTAGE) in fake.grid_changes
+    finally:
+        composition.twin.inject_fault("grid", None)
+        composition.refresh_telemetry()
+        composition.notifier = original_notifier
+
+
+def test_run_decision_cycle_notifies_the_result(composition):
+    original_notifier = composition.notifier
+    fake = _FakeNotifier()
+    composition.notifier = fake
+    try:
+        ranked, command = composition.run_decision_cycle()
+        assert fake.decision_cycle_calls == [(ranked.top, command)]
+    finally:
+        composition.notifier = original_notifier

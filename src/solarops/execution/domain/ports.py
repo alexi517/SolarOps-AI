@@ -87,3 +87,15 @@ class ExecutionMetricsRecorder(Protocol):
     def command_timed_out(self, stage: str) -> None: ...
     def verification_failed(self) -> None: ...
     def command_completed(self) -> None: ...
+
+
+class ApprovalNotifier(Protocol):
+    """The shape ``ExecutionPipeline`` notifies a human against when a
+    command pauses for approval — same reasoning as
+    ``ExecutionMetricsRecorder`` above: Execution owns this Protocol so it
+    never needs to import a real notification channel (WhatsApp, email, ...)
+    to type its own dependency. The real implementation is constructed and
+    injected by ``platform``'s composition root.
+    """
+
+    def notify_approval_needed(self, command: Command) -> None: ...

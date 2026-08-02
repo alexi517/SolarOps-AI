@@ -27,6 +27,7 @@ from solarops.api.routers import (
 )
 from solarops.observability.metrics import api_request_latency_seconds, api_requests_total
 from solarops.platform.api_composition import build_system_composition
+from solarops.platform.auto_decision_cycle import AutoDecisionCycleScheduler
 
 __all__ = ["app"]
 
@@ -56,8 +57,16 @@ class MetricsMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state.composition = build_system_composition()
-    yield
+    composition = build_system_composition()
+    app.state.composition = composition
+    scheduler = AutoDecisionCycleScheduler(
+        composition, composition.settings.auto_decision_cycle_seconds
+    )
+    scheduler.start()
+    try:
+        yield
+    finally:
+        await scheduler.stop()
 
 
 app = FastAPI(

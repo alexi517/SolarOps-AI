@@ -47,6 +47,7 @@ from solarops.execution.domain.events import (
 )
 from solarops.execution.domain.events import VerificationFailed as VerificationFailedEvent
 from solarops.execution.domain.ports import (
+    ApprovalNotifier,
     ApprovalRequestRepository,
     CommandRepository,
     ExecutionMetricsRecorder,
@@ -107,6 +108,7 @@ class ExecutionPipeline:
         clock: Clock,
         telemetry_refresh=None,
         metrics: ExecutionMetricsRecorder | None = None,
+        notifier: ApprovalNotifier | None = None,
     ) -> None:
         # Optional no-arg callable invoked right before verification — pulls a
         # fresh telemetry reading into the StateStore so verification doesn't
@@ -120,6 +122,8 @@ class ExecutionPipeline:
         # telemetry_refresh above. Every existing caller that doesn't pass
         # one keeps working unchanged.
         self._metrics = metrics
+        # Optional — None means "notify nobody," same shape as metrics above.
+        self._notifier = notifier
         self._command_planner = command_planner
         self._policy_validator = policy_validator
         self._safety_validator = safety_validator
@@ -232,6 +236,8 @@ class ExecutionPipeline:
                     approval_request_id=str(approval_request.approval_request_id),
                 )
             )
+            if self._notifier is not None:
+                self._notifier.notify_approval_needed(command)
             return command  # PAUSED — resume_after_approval() continues this
 
         self._audit(
