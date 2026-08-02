@@ -7,6 +7,14 @@ PEAK_IRRADIANCE_W_M2 = 1000.0
 SUNRISE_HOUR = 6.0
 SUNSET_HOUR = 18.0
 
+# This site is in Nigeria — WAT (West Africa Time) is a fixed UTC+1 with no
+# daylight saving, so a constant offset is correct year-round (no timezone
+# database needed). The twin's own clock (DigitalTwin._time) stays true UTC
+# throughout the rest of the system — every other timestamp (EnergyState,
+# Command.created_at, audit entries, ...) depends on that; only *this*
+# model's day/night calculation needs to see Nigeria's local hour instead.
+SITE_UTC_OFFSET_HOURS = 1.0
+
 
 def _clear_sky_irradiance(hour_of_day: float) -> float:
     """Bell-curve irradiance between sunrise and sunset, peaking at solar noon."""
@@ -37,7 +45,8 @@ class WeatherModel:
         self._forced_cloud_cover_pct: float | None = None
 
     def step(self, timestamp: datetime) -> WeatherConditions:
-        hour_of_day = timestamp.hour + timestamp.minute / 60.0 + timestamp.second / 3600.0
+        utc_hour_of_day = timestamp.hour + timestamp.minute / 60.0 + timestamp.second / 3600.0
+        hour_of_day = (utc_hour_of_day + SITE_UTC_OFFSET_HOURS) % 24.0
 
         if self._forced_cloud_cover_pct is not None:
             self._cloud_cover_pct = self._forced_cloud_cover_pct
@@ -55,5 +64,5 @@ class WeatherModel:
         )
 
     def inject_cloud_cover(self, cloud_cover_pct: float | None) -> None:
-        """Force cloud cover to a fixed value (fault injection). Pass None to release the override."""
+        """Force cloud cover to a fixed value (fault injection). Pass None to release."""
         self._forced_cloud_cover_pct = cloud_cover_pct

@@ -23,6 +23,13 @@ __all__ = ["SolarBaseline"]
 _PEAK_IRRADIANCE_W_M2 = 1000.0
 _SUNRISE_HOUR = 6.0
 _SUNSET_HOUR = 18.0
+# Kept in sync with simulation.domain.models.weather.SITE_UTC_OFFSET_HOURS —
+# this site is in Nigeria (WAT, UTC+1); the timestamps this model receives
+# are UTC, so the same offset is needed here to predict the same day/night
+# boundary the twin's real solar output actually follows. Duplicated, not
+# imported, per this file's own docstring (Forecast may not depend on
+# Simulation) — if the twin's offset ever changes, this constant must too.
+_SITE_UTC_OFFSET_HOURS = 1.0
 
 
 def _clear_sky_fraction(hour_of_day: float) -> float:
@@ -51,7 +58,8 @@ class SolarBaseline:
         elapsed = 0
         while elapsed <= horizon_minutes:
             timestamp = features.as_of + timedelta(minutes=elapsed)
-            hour_of_day = timestamp.hour + timestamp.minute / 60.0
+            utc_hour_of_day = timestamp.hour + timestamp.minute / 60.0
+            hour_of_day = (utc_hour_of_day + _SITE_UTC_OFFSET_HOURS) % 24.0
             irradiance_fraction = _clear_sky_fraction(hour_of_day)
             power_kw = self.capacity_kw * irradiance_fraction * cloud_factor
             value = Power(round(max(0.0, power_kw), 3))
