@@ -17,9 +17,11 @@ class APISettings(BaseSettings):
 
     api_key: str = "solarops-demo-key"
     # Comma-separated browser origins allowed to call this API (CORS). Defaults
-    # cover the Vite dev server for dashboard-react/; add your deployed
-    # frontend's origin here in production.
-    cors_allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # cover the Vite dev server for dashboard-react/, plus the deployed
+    # Vercel dashboard — add any further deployed frontend's origin here too.
+    cors_allowed_origins: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,https://solar-ops-ai-bice.vercel.app"
+    )
 
     @property
     def cors_allowed_origins_list(self) -> list[str]:
